@@ -13,6 +13,58 @@ The solution deploys the following components:
 - **BGP Peering**: Established between NVAs and Transit Gateway for dynamic routing
 - **Spoke VPC**: Demonstrates connectivity through the Transit Gateway
 
+## Architecture Diagram
+
+```
+                                                                  
+                                 ┌───────────────────────────────┐
+                                 │                               │
+                                 │    AWS Transit Gateway        │
+                                 │    (ASN: 64532)               │
+                                 │                               │
+                                 └───────────┬───────────────────┘
+                                             │
+                                             │ TGW Connect
+                                             │ Attachment
+                                             │
+                                 ┌───────────▼───────────────────┐
+                                 │                               │
+                                 │    TGW Connect Peers          │
+                                 │    169.254.200.0/29           │
+                                 │    169.254.201.0/29           │
+                                 │                               │
+                                 └───────────┬───────────────────┘
+                                             │
+                                             │ GRE Tunnels
+                                             │
+                     ┌─────────────┐         │         ┌─────────────┐
+┌────────────────────┤             ├─────────┼─────────┤             ├────────────────────┐
+│                    │  NVA VPC    │         │         │  Spoke VPC  │                    │
+│                    │100.64.0.0/20│         │         │100.64.16.0/20                    │
+│                    └──────┬──────┘         │         └──────┬──────┘                    │
+│                           │                │                │                           │
+│                           │                │                │                           │
+│   ┌─────────────┐   ┌─────▼─────┐          │          ┌────▼──────┐                     │
+│   │ EC2 Instance│   │EC2 Instance│         │          │EC2 Instance│                    │
+│   │ FRR Router  │   │FRR Router │         │          │(Test Host) │                    │
+│   │ AZ-a        ├───┤AZ-b       │         │          │            │                    │
+│   │ ASN: 65001  │   │ASN: 65001 │         │          │            │                    │
+│   └─────────────┘   └───────────┘         │          └────────────┘                    │
+│                                           │                                            │
+│                                           │                                            │
+└───────────────────────────────────────────┼────────────────────────────────────────────┘
+                                            │
+                                            │
+                                  ┌─────────▼──────────┐
+                                  │                    │
+                                  │  On-premises or    │
+                                  │  Other Networks    │
+                                  │                    │
+                                  └────────────────────┘
+```
+
+For a more detailed diagram, consider creating one using AWS Architecture diagrams or tools like draw.io, and place it in a `docs/` directory.
+
 ## Key Features
 
 - High-availability design with redundant NVAs across multiple AZs
