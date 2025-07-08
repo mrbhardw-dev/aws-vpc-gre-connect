@@ -72,9 +72,7 @@ router bgp ${local_as}
  no bgp ebgp-requires-policy
  no bgp default ipv4-unicast
  bgp maximum-paths 2
- neighbor ${ebgp_neighbour} remote-as ${remote_as}
- neighbor ${ebgp_neighbour} update-source ens5
- neighbor ${ebgp_neighbour} ebgp-multihop 5
+
  neighbor ${ibgp_neighbour} remote-as ${local_as}
  neighbor ${tgw_connect_ebgp_neighbour_1} remote-as ${tgw_remote_as}
  neighbor ${tgw_connect_ebgp_neighbour_1} update-source gre2
@@ -85,10 +83,7 @@ router bgp ${local_as}
  !
  address-family ipv4 unicast
   redistribute connected route-map LOOPBACK_ONLY_OUT
-  neighbor ${ebgp_neighbour} activate
-  neighbor ${ebgp_neighbour} soft-reconfiguration inbound 
-  neighbor ${ebgp_neighbour} route-map ${primary_route_map} out
-  neighbor ${ebgp_neighbour} route-map ${primary_route_map} in
+
   neighbor ${ibgp_neighbour} activate
   neighbor ${ibgp_neighbour} soft-reconfiguration inbound 
   neighbor ${tgw_connect_ebgp_neighbour_1} activate

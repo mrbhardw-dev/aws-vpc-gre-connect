@@ -79,16 +79,155 @@ For a more detailed diagram, consider creating one using AWS Architecture diagra
 - Terraform v1.0.0 or newer
 - AWS CLI configured with appropriate credentials
 
-## Deployment
+## GitHub Actions CI/CD Setup
+
+This project includes GitHub Actions workflows for automated Terraform deployment using OpenID Connect (OIDC) for secure AWS authentication.
+
+### Prerequisites for GitHub Actions
+
+1. **AWS IAM OIDC Identity Provider**: Create an OIDC identity provider in your AWS account
+2. **IAM Role**: Create an IAM role that can be assumed by GitHub Actions
+3. **Repository Secrets**: Configure the required secrets in your GitHub repository
+
+### Setting up AWS OIDC for GitHub Actions
+
+#### Step 1: Create OIDC Identity Provider in AWS
+
+```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+```
+
+#### Step 2: Create IAM Role Trust Policy
+
+Create a trust policy file `github-actions-trust-policy.json`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::ACCOUNT-ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:YOUR-USERNAME/aws-vpc-gre-connect:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### Step 3: Create IAM Role
+
+```bash
+aws iam create-role \
+  --role-name GitHubActions-TerraformRole \
+  --assume-role-policy-document file://github-actions-trust-policy.json
+```
+
+#### Step 4: Create and Attach IAM Policy
+
+Create a policy file `terraform-permissions.json` with the necessary permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*",
+        "iam:*",
+        "logs:*",
+        "s3:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTransitGateway*",
+        "ec2:DeleteTransitGateway*",
+        "ec2:DescribeTransitGateway*",
+        "ec2:ModifyTransitGateway*",
+        "ec2:CreateTransitGatewayConnect*",
+        "ec2:DeleteTransitGatewayConnect*",
+        "ec2:AcceptTransitGatewayVpcAttachment",
+        "ec2:CreateTransitGatewayVpcAttachment",
+        "ec2:DeleteTransitGatewayVpcAttachment"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Create and attach the policy:
+
+```bash
+# Create the policy
+aws iam create-policy \
+  --policy-name TerraformDeploymentPolicy \
+  --policy-document file://terraform-permissions.json
+
+# Attach the policy to the role
+aws iam attach-role-policy \
+  --role-name GitHubActions-TerraformRole \
+  --policy-arn arn:aws:iam::ACCOUNT-ID:policy/TerraformDeploymentPolicy
+```
+
+#### Step 5: Configure GitHub Repository Secrets
+
+In your GitHub repository, go to Settings > Secrets and variables > Actions, and add:
+
+- **Secret Name**: `AWS_ROLE_TO_ASSUME`
+- **Secret Value**: `arn:aws:iam::ACCOUNT-ID:role/GitHubActions-TerraformRole`
+
+#### Step 6: Configure Terraform Backend (Optional)
+
+For production use, configure a Terraform backend. Create a `backend.tf` file:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "your-terraform-state-bucket"
+    key            = "aws-vpc-gre-connect/terraform.tfstate"
+    region         = "eu-west-1"
+    encrypt        = true
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
+
+### GitHub Actions Workflow
+
+The included workflow (`.github/workflows/terraform.yml`) will:
+
+1. **On Pull Request**: Run `terraform plan` to show proposed changes
+2. **On Push to Main**: Run `terraform apply` to deploy changes
+3. **Security**: Use OIDC for secure, keyless authentication
+4. **Validation**: Check Terraform formatting and validate configuration
+
+### Manual Deployment
+
+For manual deployment without GitHub Actions:
 
 1. Clone this repository:
-```
-git clone https://gitlab.aws.dev/mrbhardw/aws-vpc-gre-connect.git
+```bash
+git clone https://github.com/YOUR-USERNAME/aws-vpc-gre-connect.git
 cd aws-vpc-gre-connect
 ```
 
 2. Initialize Terraform:
-```
+```bash
 terraform init
 ```
 
@@ -99,14 +238,24 @@ terraform init
    - `transit_gateway_address`: Outside IP addresses for GRE tunnels
 
 4. Deploy the infrastructure:
-```
+```bash
+terraform plan
 terraform apply
 ```
 
 5. Verify the deployment:
-   - Check EC2 instances are running
-   - Verify BGP sessions are established
-   - Test connectivity between VPCs
+   ```bash
+   # Check EC2 instances are running
+   aws ec2 describe-instances --filters "Name=tag:Name,Values=*frr-instance*" --query 'Reservations[].Instances[].State.Name'
+   
+   # Verify BGP sessions (SSH to NVA instance)
+   ssh -i your-key.pem ubuntu@<nva-public-ip>
+   sudo vtysh -c "show ip bgp summary"
+   
+   # Test connectivity from spoke instance
+   ssh -i your-key.pem ubuntu@<spoke-private-ip>
+   ping 172.16.0.10  # Ping NVA loopback
+   ```
 
 ## Network Configuration
 
@@ -119,52 +268,160 @@ The solution creates:
 - BGP peering with ASNs:
   - Transit Gateway ASN: 64532
   - NVA ASN: 65001
-  - Route Server ASN: 64512 (when enabled)
+
+## Project Structure
+
+```
+├── .github/
+│   └── workflows/
+│       └── terraform.yml          # GitHub Actions CI/CD pipeline
+├── templates/
+│   └── bgp_config.sh.tpl          # FRR BGP configuration template
+├── rendered/                      # Generated user data scripts
+├── data.tf                        # Data sources (AMI lookup)
+├── instance.tf                    # EC2 instance configurations
+├── labels.tf                      # Resource labeling and tagging
+├── locals.tf                      # Local variables and CIDR calculations
+├── network.tf                     # VPC and networking resources
+├── provider.tf                    # Terraform provider configuration
+├── security_group.tf              # Security group definitions
+├── tgw_connect.tf                 # Transit Gateway and Connect resources
+├── variables.tf                   # Input variables
+└── README.md                      # This file
+```
 
 ## Components
 
 ### EC2 Instances
 
 Two EC2 instances are deployed in the NVA VPC, each configured with:
-- Ubuntu AMI
-- FRR for BGP routing
-- GRE tunnels for Transit Gateway Connect
-- Loopback interfaces for BGP peering
+- Ubuntu AMI with FRR (Free Range Routing) software
+- BGP routing with Transit Gateway Connect peers
+- GRE tunnels for encapsulation
+- Loopback interfaces for route advertisement
+- High-availability deployment across multiple AZs
 
 ### Transit Gateway
 
 A Transit Gateway is deployed with:
 - Connect attachment to the NVA VPC
-- Connect peers for GRE tunneling
-- Route tables for traffic management
-- BGP peering with NVAs
+- Connect peers for GRE tunneling (2 peers for redundancy)
+- Custom route tables for traffic management
+- BGP peering with NVA instances
 
 ### VPCs
 
-- **NVA VPC**: Contains the routing instances and Transit Gateway attachment
-- **Spoke VPC**: Demonstrates connectivity through the Transit Gateway
+- **NVA VPC** (`100.64.0.0/20`): Contains the FRR routing instances and Transit Gateway attachment
+- **Spoke VPC** (`100.64.16.0/20`): Demonstrates connectivity through the Transit Gateway
 
 ## Customization
 
-You can customize the deployment by modifying:
+### Configuration Files
 
-- `variables.tf`: Change deployment parameters
-- `locals.tf`: Adjust CIDR allocations and network design
-- `templates/bgp_config.sh.tpl`: Modify BGP configuration
+- **`variables.tf`**: Modify deployment parameters (region, instance types, CIDR blocks)
+- **`locals.tf`**: Adjust CIDR allocations and network design calculations
+- **`templates/bgp_config.sh.tpl`**: Customize FRR BGP configuration and routing policies
+- **`security_group.tf`**: Modify security group rules for access control
+
+### Common Customizations
+
+1. **Change AWS Region**:
+   ```hcl
+   variable "region" {
+     default = "us-west-2"  # Change from eu-west-1
+   }
+   ```
+
+2. **Modify Instance Types**:
+   ```hcl
+   variable "instance_type" {
+     default = "c5n.large"  # For higher network performance
+   }
+   ```
+
+3. **Adjust CIDR Blocks**:
+   ```hcl
+   variable "aws_cidr_block" {
+     default = "10.0.0.0/16"  # Use different IP range
+   }
+   ```
+
+4. **Configure SSH Key**:
+   ```hcl
+   # In instance.tf, replace hardcoded key name
+   key_name = var.ssh_key_name
+   ```
 
 ## Troubleshooting
 
-Common issues and solutions:
+### Common Issues and Solutions
 
-1. **BGP sessions not establishing**:
-   - Check security groups allow BGP traffic (TCP port 179)
-   - Verify GRE tunnels are properly configured
-   - Check instance user data logs for configuration errors
+#### BGP Sessions Not Establishing
 
-2. **Connectivity issues**:
-   - Verify route propagation in Transit Gateway route tables
-   - Check that source/destination check is disabled on EC2 instances
-   - Ensure IP forwarding is enabled on the instances
+1. **Check Security Groups**:
+   ```bash
+   # Verify BGP traffic is allowed (TCP port 179)
+   aws ec2 describe-security-groups --group-ids sg-xxxxxxxxx
+   ```
+
+2. **Verify GRE Tunnels**:
+   ```bash
+   # SSH to NVA instance and check GRE tunnel status
+   sudo ip tunnel show
+   sudo ip addr show gre1
+   sudo ip addr show gre2
+   ```
+
+3. **Check FRR BGP Status**:
+   ```bash
+   # Connect to FRR daemon
+   sudo vtysh
+   show ip bgp summary
+   show ip bgp neighbors
+   ```
+
+4. **Review Instance Logs**:
+   ```bash
+   # Check user data execution logs
+   sudo tail -f /var/log/cloud-init-output.log
+   sudo cat /var/log/bgp_setup.log
+   ```
+
+#### Connectivity Issues
+
+1. **Verify Route Propagation**:
+   ```bash
+   # Check Transit Gateway route tables
+   aws ec2 describe-transit-gateway-route-tables
+   aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id tgw-rtb-xxxxxxxxx
+   ```
+
+2. **Check Source/Destination Check**:
+   ```bash
+   # Verify source/destination check is disabled on NVA instances
+   aws ec2 describe-instance-attribute --instance-id i-xxxxxxxxx --attribute sourceDestCheck
+   ```
+
+3. **Verify IP Forwarding**:
+   ```bash
+   # SSH to NVA instance and check IP forwarding
+   cat /proc/sys/net/ipv4/ip_forward  # Should return 1
+   ```
+
+#### GitHub Actions Issues
+
+1. **OIDC Authentication Failures**:
+   - Verify the IAM role trust policy includes the correct repository path
+   - Check that the OIDC provider thumbprint is correct
+   - Ensure the role has necessary permissions
+
+2. **Terraform State Issues**:
+   - Configure remote state backend for team collaboration
+   - Use state locking with DynamoDB to prevent conflicts
+
+3. **Permission Errors**:
+   - Review CloudTrail logs for specific permission denials
+   - Apply principle of least privilege to IAM policies
 
 ## Contributing
 
@@ -174,6 +431,31 @@ Contributions to improve the solution are welcome. Please follow standard Git wo
 2. Create a feature branch
 3. Submit a pull request
 
+## Security Considerations
+
+- **IAM Roles**: Use least privilege principle for all IAM roles
+- **Security Groups**: Restrict access to specific IP ranges where possible
+- **Encryption**: All EBS volumes are encrypted by default
+- **VPC Flow Logs**: Enabled for network monitoring and troubleshooting
+- **SSH Access**: Limited to specific management IP addresses
+
+## Cost Optimization
+
+- **Instance Types**: Default uses t3.xlarge, adjust based on throughput requirements
+- **EBS Volumes**: Uses gp3 volumes for cost-effective performance
+- **NAT Gateways**: Deployed in all AZs for high availability (consider cost vs. availability trade-offs)
+- **Transit Gateway**: Charges apply for attachments and data processing
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with proper documentation
+4. Test thoroughly
+5. Submit a pull request
+
 ## License
 
-This project is licensed under standard AWS terms.
+This project is licensed under the MIT License - see the LICENSE file for details.
