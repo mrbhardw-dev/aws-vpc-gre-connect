@@ -1,5 +1,8 @@
 # AWS VPC GRE Connect
 
+**Author:** Mritunjay Bhardwaj  
+**Email:** mritunjay.bhardwaj@mbtux.com
+
 This project demonstrates how to implement a Transit Gateway Connect attachment with GRE tunnels for AWS networking. It creates a scalable and resilient network architecture using AWS Transit Gateway, EC2 instances running FRR (Free Range Routing), and GRE tunnels to establish BGP peering.
 
 ## Architecture Overview
@@ -16,53 +19,68 @@ The solution deploys the following components:
 ## Architecture Diagram
 
 ```
-                                                                  
-                                 ┌───────────────────────────────┐
-                                 │                               │
-                                 │    AWS Transit Gateway        │
-                                 │    (ASN: 64532)               │
-                                 │                               │
-                                 └───────────┬───────────────────┘
-                                             │
-                                             │ TGW Connect
-                                             │ Attachment
-                                             │
-                                 ┌───────────▼───────────────────┐
-                                 │                               │
-                                 │    TGW Connect Peers          │
-                                 │    169.254.200.0/29           │
-                                 │    169.254.201.0/29           │
-                                 │                               │
-                                 └───────────┬───────────────────┘
-                                             │
-                                             │ GRE Tunnels
-                                             │
-                     ┌─────────────┐         │         ┌─────────────┐
-┌────────────────────┤             ├─────────┼─────────┤             ├────────────────────┐
-│                    │  NVA VPC    │         │         │  Spoke VPC  │                    │
-│                    │100.64.0.0/20│         │         │100.64.16.0/20                    │
-│                    └──────┬──────┘         │         └──────┬──────┘                    │
-│                           │                │                │                           │
-│                           │                │                │                           │
-│   ┌─────────────┐   ┌─────▼─────┐          │          ┌────▼──────┐                     │
-│   │ EC2 Instance│   │EC2 Instance│         │          │EC2 Instance│                    │
-│   │ FRR Router  │   │FRR Router │         │          │(Test Host) │                    │
-│   │ AZ-a        ├───┤AZ-b       │         │          │            │                    │
-│   │ ASN: 65001  │   │ASN: 65001 │         │          │            │                    │
-│   └─────────────┘   └───────────┘         │          └────────────┘                    │
-│                                           │                                            │
-│                                           │                                            │
-└───────────────────────────────────────────┼────────────────────────────────────────────┘
-                                            │
-                                            │
-                                  ┌─────────▼──────────┐
-                                  │                    │
-                                  │  On-premises or    │
-                                  │  Other Networks    │
-                                  │                    │
-                                  └────────────────────┘
-```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                AWS Cloud Environment                                       │
+│                                                                                            │
+│    ┌────────────────────────────────────────────────────────────────────────────────────┐  │
+│    │                                AWS Transit Gateway                                 │  │
+│    │                                  ASN: 64532                                        │  │
+│    │                              CIDR: 192.168.0.0/24                                  │  │
+│    └──────────────────────────────┬─────────────────────────────────────────────────────┘  │
+│                                   │                                                       │
+│                                   │ TGW Connect Attachment                                │
+│                                   │                                                       │
+│    ┌──────────────────────────────▼────────────────────────────────────────────────────┐  │
+│    │                                TGW Connect Peers                                   │  │
+│    │    Peer 1: 169.254.200.0/29       │      Peer 2: 169.254.201.0/29                   │  │
+│    │    TGW IP: 192.168.0.10          │      TGW IP: 192.168.0.11                        │  │
+│    └─────────────────────┬───────────┴────────────┬─────────────────────────────────────┘  │
+│                          │                        │                                        │
+│                          │ GRE Tunnels            │ VPC Attachment                         │
+│                          │                        │                                        │
+│  ┌───────────────────────▼────────────────┐   ┌───▼─────────────────────────────────────┐│
+│  │              NVA VPC                  │   │               Spoke VPC                 ││
+│  │            CIDR: 100.64.0.0/20        │   │           CIDR: 100.64.16.0/20          ││
+│  │                                       │   │                                         ││
+│  │  ┌──────────────────────────────────┐ │   │ ┌─────────────────────────────────────┐ ││
+│  │  │        Public Subnets            │ │   │ │         Private Subnets            │ ││
+│  │  │   100.64.0.0/24 (AZ-a)           │ │   │ │      100.64.16.0/24 (AZ-a)         │ ││
+│  │  │   100.64.1.0/24 (AZ-b)           │ │   │ │      100.64.17.0/24 (AZ-b)         │ ││
+│  │  └──────────────────────────────────┘ │   │ └─────────────────────────────────────┘ ││
+│  │                                       │   │                                         │ │
+│  │  ┌──────────────┐   ┌──────────────┐  │   │ ┌─────────────────────────────────────┐ ││
+│  │  │ FRR Instance │   │ FRR Instance │  │   │ │            Test Instance           │ ││
+│  │  │    AZ-a      │   │    AZ-b      │  │   │ │                                     │ ││
+│  │  │  ASN: 65001  │   │  ASN: 65001  │  │   │ │       (Connectivity Testing)        │ ││
+│  │  │100.64.2.100  │   │100.64.3.100  │  │   │ │                                     │ ││
+│  │  │ Loopback:    │   │ Loopback:    │  │   │ │                                     │ ││
+│  │  │172.16.0.10/32│   │172.16.0.11/32│  │   │ │                                     │ ││
+│  │  └──────┬───────┘   └──────┬───────┘  │   │ └─────────────────────────────────────┘ ││
+│  │         │                  │          │   │                                         │ │
+│  │         └──────────────────┼──────────┘   │                                         │ │
+│  │                iBGP        │              │                                         │ │
+│  │         (169.254.6.0/29)   │              │                                         │ │
+│  └────────────────────────────┘              └─────────────────────────────────────────┘│
+│                                                                                            │
+│  BGP Peering Details:                                                                      │
+│  • iBGP between NVA instances (ASN 65001)                                                  │
+│  • eBGP between NVAs and Transit Gateway (ASN 64532)                                       │
+│  • Route advertisement: Loopback networks (172.16.0.0/24)                                  │
+│  • Path preference using MED attributes                                                    │
+│                                                                                            │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 
+                                         │
+                                         │ Future Connectivity
+                                         ▼
+                             ┌──────────────────────────────┐
+                             │                              │
+                             │   On-premises or             │
+                             │   Other Networks             │
+                             │                              │
+                             └──────────────────────────────┘
+
+```
 For a more detailed diagram, consider creating one using AWS Architecture diagrams or tools like draw.io, and place it in a `docs/` directory.
 
 ## Key Features
@@ -117,7 +135,7 @@ Create a trust policy file `github-actions-trust-policy.json`:
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:YOUR-USERNAME/aws-vpc-gre-connect:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:mrbhardw-dev/aws-vpc-gre-connect:ref:refs/heads/main"
         }
       }
     }
@@ -222,7 +240,7 @@ For manual deployment without GitHub Actions:
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/YOUR-USERNAME/aws-vpc-gre-connect.git
+git clone https://github.com/mrbhardw-dev/aws-vpc-gre-connect.git
 cd aws-vpc-gre-connect
 ```
 
@@ -279,13 +297,17 @@ The solution creates:
 │   └── bgp_config.sh.tpl          # FRR BGP configuration template
 ├── rendered/                      # Generated user data scripts
 ├── data.tf                        # Data sources (AMI lookup)
+├── Design.jpg                     # Architecture diagram image
+├── endpoint.tf                    # VPC endpoints configuration
 ├── instance.tf                    # EC2 instance configurations
 ├── labels.tf                      # Resource labeling and tagging
 ├── locals.tf                      # Local variables and CIDR calculations
 ├── network.tf                     # VPC and networking resources
+├── output.tf                      # Terraform outputs
 ├── provider.tf                    # Terraform provider configuration
 ├── security_group.tf              # Security group definitions
 ├── tgw_connect.tf                 # Transit Gateway and Connect resources
+├── user_data.tpl                  # Legacy user data template
 ├── variables.tf                   # Input variables
 └── README.md                      # This file
 ```
