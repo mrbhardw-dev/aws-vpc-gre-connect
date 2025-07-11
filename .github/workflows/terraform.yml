@@ -33,7 +33,7 @@ jobs:
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: 'iam-role-github-actions-01'
+        role-to-assume: 'arn:aws:iam::791320653008:role/iam-role-github-actions-01'
         aws-region: 'eu-west-1'
 
     # Install the latest version of Terraform CLI
